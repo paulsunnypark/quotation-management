@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.db
+.env
+venv/
+.venv/
+ENV/
+.idea/
+.vscode/
+견적서_이력/
