@@ -14,7 +14,9 @@ class MainApp:
         self.data_manager = DataManager()
         self.estimate_handler = EstimateHandler()
         self.df = self.data_manager.load_base_items()
-        
+        # expanded 상태를 session state에 초기화
+        st.session_state.setdefault('expanded_categories', {})
+
     def format_history_item(self, item):
         """견적서 이력 항목 포맷팅"""
         # 파일명이 있는 경우 파일명을 기반으로 표시
@@ -62,33 +64,23 @@ class MainApp:
 
     def clear_session_state(self):
         """세션 스테이트 초기화"""
-        # 보존할 키 목록
-        preserved_keys = ['_is_running', '_script_run_ctx']
-        
-        # 모든 입력 필드 초기화
+        # 1. 일반 정보 필드와 관련된 키를 세션에서 삭제
+        keys_to_delete = [
+            key for key in st.session_state.keys()
+            if not key.startswith('_') and not key.startswith('qty_')
+        ]
+        for key in keys_to_delete:
+            del st.session_state[key]
+
+        # 2. 모든 수량 위젯의 상태를 0으로 강제 설정
         for key in list(st.session_state.keys()):
-            if key not in preserved_keys:
-                del st.session_state[key]
-                
-        # 주요 필드들을 빈 값으로 초기화
-        st.session_state.update({
-            'customer_company_name': '',
-            'customer_project_name': '',
-            'customer_manager_name': '',
-            'customer_email': '',
-            'customer_phone': '',
-            'delivery_period': '',
-            'warranty_period': '',
-            'company_manager_name': '',
-            'company_email': '',
-            'company_phone': '',
-            'special_notes': '',
-            'loaded_items': [],
-            'current_estimate_id': None,
-            'is_final': False
-        })
+            if key.startswith('qty_'):
+                st.session_state[key] = 0
         
-        st.success("✨ 모든 입력 필드가 초기화되었습니다.")
+        # 3. Expander 상태 초기화 (모두 닫기)
+        st.session_state['expanded_categories'] = {}
+        
+        st.toast("✨ 모든 입력 필드가 초기화되었습니다.", icon="🧼")
 
     def render_customer_info(self):
         """고객 정보 입력 섹션"""
@@ -180,13 +172,21 @@ class MainApp:
         st.subheader("1️⃣ 견적 항목 선택")
         selected_quantities = {}
         
+        # 초기화 시 모든 expander를 닫기 위해 상태 관리
+        if 'expanded_categories' not in st.session_state:
+            st.session_state['expanded_categories'] = {cat: False for cat in self.df['분류'].unique()}
+
         for cat in self.df['분류'].unique():
-            with st.expander(f"📂 {cat} 항목 보기"):
+            # 각 expander의 상태를 session_state에서 가져옴
+            is_expanded = st.session_state['expanded_categories'].get(cat, False)
+            
+            with st.expander(f"📂 {cat} 항목 보기", expanded=is_expanded):
                 sub_df = self.df[self.df['분류'] == cat].reset_index(drop=True)
                 for i, row in sub_df.iterrows():
                     col1, col2 = st.columns([3, 1])
                     with col1:
-                        st.markdown(f"**[{row['항목코드']}] {row['품목명']}**")
+                    #    st.markdown(f"**[{row['항목코드']}] {row['품목명']}**")
+                        st.markdown(f"**[{row['품목명']}] {row['항목코드']}**")
                         st.markdown(f"{row['설명']}")
                     with col2:
                         default_qty = 0
@@ -376,6 +376,18 @@ class MainApp:
     def run(self):
         """메인 애플리케이션 실행"""
         st.title("📄 견적서 생성 및 이력 관리")
+        
+        # 사이드바 너비 조정을 위한 CSS 주입
+        st.markdown(
+            """
+            <style>
+            section[data-testid="stSidebar"] {
+                width: 540px !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
         
         self.render_sidebar()
         customer_info = self.render_customer_info()

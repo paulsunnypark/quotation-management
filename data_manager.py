@@ -12,7 +12,7 @@ class DataManager:
         
     def load_base_items(self):
         """기초 견적 항목 데이터 로드"""
-        return pd.read_csv(self.base_csv_file)
+        return pd.read_csv(self.base_csv_file, comment='#', skipinitialspace=True)
         
     def save_estimate(self, meta_data, selected_items, filename, parent_id=None):
         """견적서 데이터 저장"""
