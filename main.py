@@ -6,6 +6,7 @@ from estimate_template import EstimateTemplate
 import datetime
 import webbrowser
 import os
+import re
 from database import Database
 
 class MainApp:
@@ -19,7 +20,7 @@ class MainApp:
 
     def format_history_item(self, item):
         """견적서 이력 항목 포맷팅"""
-        # 파일명이 있는 경우 파일명을 기반으로 표시
+        # 파일명��� 있는 경우 파일명을 기반으로 표시
         if item['파일명']:
             return f"{item['파일명']} - {item['총금액']:,.0f}원"
         
@@ -62,7 +63,7 @@ class MainApp:
                 self.clear_session_state()
                 st.rerun()
 
-    def clear_session_state(self):
+    def clear_session_state(self, silent=False):
         """세션 스테이트 초기화"""
         # 1. 일반 정보 필드와 관련된 키를 세션에서 삭제
         keys_to_delete = [
@@ -80,7 +81,8 @@ class MainApp:
         # 3. Expander 상태 초기화 (모두 닫기)
         st.session_state['expanded_categories'] = {}
         
-        st.toast("✨ 모든 입력 필드가 초기화되었습니다.", icon="🧼")
+        if not silent:
+            st.session_state.message = "✨ 모든 입력 필드가 초기화되었습니다."
 
     def render_customer_info(self):
         """고객 정보 입력 섹션"""
@@ -89,28 +91,28 @@ class MainApp:
         # 고객 정보를 한 컬럼으로 통합
         customer_info = {
             "고객사명": st.text_input("고객사명", 
-                value=st.session_state.get('고객사명', ''),
+                value=st.session_state.get('customer_company_name', ''),
                 key="customer_company_name"),
             "건명": st.text_input("건명 (프로젝트명)", 
-                value=st.session_state.get('건명', ''),
+                value=st.session_state.get('customer_project_name', ''),
                 key="customer_project_name"),
             "담당자명": st.text_input("담당자명/직위", 
-                value=f"{st.session_state.get('담당자명', '')} {st.session_state.get('직위', '')}".strip(),
+                value=st.session_state.get('customer_manager_name', ''),
                 key="customer_manager_name"),
             "이메일": st.text_input("이메일", 
-                value=st.session_state.get('이메일', ''),
+                value=st.session_state.get('customer_email', ''),
                 key="customer_email"),
             "전화번호": st.text_input("전화번호", 
-                value=st.session_state.get('전화번호', ''),
+                value=st.session_state.get('customer_phone', ''),
                 key="customer_phone"),
             "견적일자": st.date_input("견적일자",
-                value=datetime.date.today(),
+                value=st.session_state.get('estimate_date', datetime.date.today()),
                 key="estimate_date"),
             "납품기간": st.text_input("납품기간", 
-                value=st.session_state.get('납품기간', ''),
+                value=st.session_state.get('delivery_period', ''),
                 key="delivery_period"),
             "하자기간": st.text_input("하자기간", 
-                value=st.session_state.get('하자기간', ''),
+                value=st.session_state.get('warranty_period', ''),
                 key="warranty_period")
         }
             
@@ -135,16 +137,16 @@ class MainApp:
         # 당사 정보를 한 컬럼으로 통합
         company_info = {
             "견적담당자명": st.text_input("담당자명/직위", 
-                value=f"{st.session_state.get('견적담당자명', '')} {st.session_state.get('견적담당자직위', '')}".strip(),
+                value=st.session_state.get('company_manager_name', ''),
                 key="company_manager_name"),
             "견적담당자이메일": st.text_input("이메일", 
-                value=st.session_state.get('견적담당자이메일', ''),
+                value=st.session_state.get('company_email', ''),
                 key="company_email"),
             "견적담당자전화번호": st.text_input("전화번호", 
-                value=st.session_state.get('견적담당자전화번호', ''),
+                value=st.session_state.get('company_phone', ''),
                 key="company_phone"),
             "특이사항": st.text_area("특이사항", 
-                value=st.session_state.get('특이사항', ''),
+                value=st.session_state.get('special_notes', ''),
                 height=150,
                 help="견적서에 포함될 특이사항을 입력하세요. (예: 납품조건, 결제조건 등)",
                 key="special_notes"),
@@ -168,32 +170,43 @@ class MainApp:
         return company_info
 
     def render_item_selection(self):
-        """견적 항목 선택 섹션"""
+        """견적 항목 선택 및 검색 섹션"""
         st.subheader("1️⃣ 견적 항목 선택")
+        
+        # 검색어 입력
+        search_term = st.text_input("항목 검색 (품목명, 코드, 설명)", 
+                                    key="search_term", 
+                                    value=st.session_state.get('search_term', ''))
+        
+        # 검색어에 따라 데이터프레임 필터링
+        if search_term:
+            filtered_df = self.df[
+                self.df['품목명'].str.contains(search_term, case=False, na=False) |
+                self.df['항목코드'].str.contains(search_term, case=False, na=False) |
+                self.df['설명'].str.contains(search_term, case=False, na=False)
+            ]
+        else:
+            filtered_df = self.df
+
         selected_quantities = {}
         
         # 초기화 시 모든 expander를 닫기 위해 상태 관리
         if 'expanded_categories' not in st.session_state:
-            st.session_state['expanded_categories'] = {cat: False for cat in self.df['분류'].unique()}
+            st.session_state['expanded_categories'] = {cat: False for cat in filtered_df['분류'].unique()}
 
-        for cat in self.df['분류'].unique():
+        for cat in filtered_df['분류'].unique():
             # 각 expander의 상태를 session_state에서 가져옴
             is_expanded = st.session_state['expanded_categories'].get(cat, False)
             
             with st.expander(f"📂 {cat} 항목 보기", expanded=is_expanded):
-                sub_df = self.df[self.df['분류'] == cat].reset_index(drop=True)
+                sub_df = filtered_df[filtered_df['분류'] == cat].reset_index(drop=True)
                 for i, row in sub_df.iterrows():
                     col1, col2 = st.columns([3, 1])
                     with col1:
-                    #    st.markdown(f"**[{row['항목코드']}] {row['품목명']}**")
                         st.markdown(f"**[{row['품목명']}] {row['항목코드']}**")
                         st.markdown(f"{row['설명']}")
                     with col2:
-                        default_qty = 0
-                        if 'loaded_items' in st.session_state:
-                            for item in st.session_state['loaded_items']:
-                                if item['항목코드'] == row['항목코드']:
-                                    default_qty = item['수량']
+                        default_qty = st.session_state.get(f"qty_{cat}_{i}", 0)
                         qty = st.number_input(
                             f"수량 ({row['단위']}) - {row['항목코드']}", 
                             min_value=0, 
@@ -204,6 +217,33 @@ class MainApp:
                         selected_quantities[f"qty_{cat}_{i}"] = qty
                         
         return selected_quantities
+
+    def validate_inputs(self, customer_info, company_info):
+        """입력값 유효성 검사"""
+        # 필수 항목 검사
+        if not customer_info['고객사명'] or not customer_info['건명']:
+            st.warning("⚠️ '고객사명'과 '건명'은 필수 입력 항목입니다.")
+            return False
+            
+        # 이메일 형식 검사
+        email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+        if customer_info['이메일'] and not re.match(email_pattern, customer_info['이메일']):
+            st.warning(f"⚠️ 고객 이메일 형식이 올바르지 않습니다: {customer_info['이메일']}")
+            return False
+        if company_info['견적담당자이메일'] and not re.match(email_pattern, company_info['견적담당자이메일']):
+            st.warning(f"⚠️ 당사 담당자 이메일 형식이 올바르지 않습니다: {company_info['견적담당자이메일']}")
+            return False
+            
+        # 전화번호 형식 검사 (간단한 숫자 및 하이픈 검사)
+        phone_pattern = r"^[\d-]{10,13}$"
+        if customer_info['전화번호'] and not re.match(phone_pattern, customer_info['전화번호']):
+            st.warning(f"⚠️ 고객 전화번호 형식이 올바르지 않습니다: {customer_info['전화번호']}")
+            return False
+        if company_info['견적담당자전화번호'] and not re.match(phone_pattern, company_info['견적담당자전화번호']):
+            st.warning(f"⚠️ 당사 담당자 전화번호 형식이 올바르지 않습니다: {company_info['견적담당자전화번호']}")
+            return False
+            
+        return True
 
     def generate_filename(self, customer_info, version):
         """견적서 파일명 생성"""
@@ -306,39 +346,38 @@ class MainApp:
         # 견적서 파일명 생성
         filename = self.generate_filename(customer_info, version)
 
-        col1, col2, col3 = st.columns(3)
+        # --- 버튼 섹션 ---
+        col1, col2, col3, col4 = st.columns(4)
 
         # 견적서 저장
         with col1:
             if st.button("💾 견적서 저장"):
-                meta_data = {**customer_info, **company_info, "총금액": total, "is_final": is_final}
-                parent_id = st.session_state.get('current_estimate_id')
-                try:
-                    estimate_id = self.data_manager.save_estimate(
-                        meta_data, 
-                        selected_items, 
-                        filename,
-                        parent_id
-                    )
-                    if estimate_id:
-                        st.session_state['current_estimate_id'] = estimate_id
-                        st.session_state['is_final'] = is_final
-                        st.success(f"✅ 견적서 저장 완료: {filename}")
-                        st.session_state['refresh_sidebar'] = True
-                        st.rerun()
-                    else:
-                        st.error("견적서 저장에 실패했습니다.")
-                except Exception as e:
-                    st.error(f"견적서 저장 중 오류가 발생했습니다: {str(e)}")
+                if self.validate_inputs(customer_info, company_info):
+                    meta_data = {**customer_info, **company_info, "총금액": total, "is_final": is_final}
+                    parent_id = st.session_state.get('current_estimate_id')
+                    try:
+                        estimate_id = self.data_manager.save_estimate(
+                            meta_data, 
+                            selected_items, 
+                            filename,
+                            parent_id
+                        )
+                        if estimate_id:
+                            st.session_state['current_estimate_id'] = estimate_id
+                            st.session_state['is_final'] = is_final
+                            st.success(f"✅ 견적서 저장 완료: {filename}")
+                            st.session_state['refresh_sidebar'] = True
+                            st.rerun()
+                        else:
+                            st.error("견적서 저장에 실패했습니다.")
+                    except Exception as e:
+                        st.error(f"견적서 저장 중 오류가 발생했습니다: {str(e)}")
 
         # HTML 견적서 생성
         with col2:
             if st.button("📄 견적서 HTML 생성"):
                 html_content = EstimateTemplate.generate_html(
-                    customer_info,
-                    company_info,
-                    selected_items,
-                    total
+                    customer_info, company_info, selected_items, total
                 )
                 html_path = EstimateTemplate.save_html(html_content, filename, self.data_manager.doc_folder)
                 webbrowser.open(f'file://{os.path.abspath(html_path)}')
@@ -348,11 +387,7 @@ class MainApp:
         with col3:
             if st.button("📄 견적서 PDF 다운로드"):
                 pdf_path = self.estimate_handler.generate_pdf(
-                    filename, 
-                    customer_info, 
-                    company_info, 
-                    selected_items, 
-                    total
+                    filename, customer_info, company_info, selected_items, total
                 )
                 with open(pdf_path, "rb") as f:
                     st.download_button(
@@ -361,22 +396,66 @@ class MainApp:
                         file_name=f"{filename}.pdf",
                         mime="application/pdf"
                     )
+        
+        # 견적서 미리보기
+        with col4:
+            if st.button("👁️ 견적서 미리보기"):
+                st.session_state['show_preview'] = True
+
+        if st.session_state.get('show_preview', False):
+            with st.expander("견적서 미리보기", expanded=True):
+                html_content = EstimateTemplate.generate_html(
+                    customer_info, company_info, selected_items, total
+                )
+                st.markdown(html_content, unsafe_allow_html=True)
+                if st.button("미리보기 닫기"):
+                    st.session_state['show_preview'] = False
+                    st.rerun()
+
 
     def load_estimate_to_session(self, estimate_data, items_data):
         """불러온 견적서 데이터를 세션에 저장"""
+        # 기존 세션 초기화 (메시지 없이)
+        self.clear_session_state(silent=True)
+        
+        # 불러온 데이터로 세션 업데이트
         st.session_state['loaded_items'] = items_data
         st.session_state['current_estimate_id'] = estimate_data.get('estimate_id')
         st.session_state['is_final'] = estimate_data.get('is_final', False)
         
         # 고객 정보와 회사 정보를 세션에 저장
         for key, value in estimate_data.items():
-            if key not in ['estimate_id', 'is_final']:
-                st.session_state[key] = value
+            session_key_map = {
+                '고객사명': 'customer_company_name', '건명': 'customer_project_name',
+                '담당자명': 'customer_manager_name', '이메일': 'customer_email',
+                '전화번호': 'customer_phone', '납품기간': 'delivery_period',
+                '하자기간': 'warranty_period', '견적담당자명': 'company_manager_name',
+                '견적담당자이메일': 'company_email', '견적담당자전화번호': 'company_phone',
+                '특이사항': 'special_notes'
+            }
+            if key in session_key_map:
+                st.session_state[session_key_map[key]] = value
+            
+            if key == '견적일자' and value:
+                st.session_state['estimate_date'] = datetime.datetime.strptime(value, "%Y-%m-%d").date()
+
+        # 수량 정보 업데이트
+        for item in items_data:
+            for cat in self.df['분류'].unique():
+                sub_df = self.df[self.df['분류'] == cat].reset_index(drop=True)
+                for i, row in sub_df.iterrows():
+                    if row['항목코드'] == item['항목코드']:
+                        st.session_state[f"qty_{cat}_{i}"] = item['수량']
+
 
     def run(self):
         """메인 애플리케이션 실행"""
         st.title("📄 견적서 생성 및 이력 관리")
         
+        if 'message' in st.session_state:
+            st.success(st.session_state.message, icon="🧼")
+            del st.session_state.message
+            
         # 사이드바 너비 조정을 위한 CSS 주입
         st.markdown(
             """
