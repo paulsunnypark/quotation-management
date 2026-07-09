@@ -1,38 +1,46 @@
 # 프로젝트 구조
 
-## 1. 디렉토리 구조
+## 현재 구조
 
-```
-Quotation/
-├── .git/               # Git 버전 관리
-├── .gitignore          # Git 무시 파일 목록
-├── docs/               # 프로젝트 문서
-│   ├── development_setup.md
-│   └── project_structure.md
-├── venv/               # Python 가상 환경
-├── 견적서_이력/         # 생성된 견적서 파일 (PDF, CSV, HTML)
-├── __pycache__/        # Python 캐시 파일
-├── arialuni.TTF        # PDF 생성용 한글 폰트
-├── data_manager.py     # 데이터베이스 및 파일 I/O 관리
-├── database.py         # SQLite 데이터베이스 연결 및 초기화
-├── Estimate_App.py     # (구) Streamlit 견적 앱 (단일 파일)
-├── estimate_handler.py # 견적 계산 및 PDF/HTML 생성 로직
-├── estimate_template.py# HTML 견적서 템플릿
-├── main.py             # 메인 Streamlit 애플리케이션
-├── Quote_Reload_App.py # (구) Streamlit 견적 불러오기 앱
-├── README.md           # 프로젝트 개요
-├── requirements.txt    # Python 의존성 목록
-├── 기초_견적항목_테이블.csv # 초기 견적 항목 데이터
-└── 견적서.pdf          # (예시) 생성된 견적서 PDF
+```text
+quotation-management/
+├── catalog/                         # CSV fallback 및 가격마스터 재생성용 시드
+├── docs/                            # 운영/개발 문서
+├── reports/                         # 사용자 보고 HTML
+├── specs/                           # 설계 메모
+├── tests/                           # CPQ 엔진 검증 테스트
+├── arialuni.TTF                     # PDF 한글 폰트
+├── build_price_master.py            # package_price.xlsx 재생성 도구
+├── catalog_db.py                    # Track B 카탈로그 SQLite 재생성/조회
+├── cpq_engine.py                    # Track B 패키지 CPQ 계산 엔진
+├── data_manager.py                  # Track A 가격 로드 및 견적 저장 중계
+├── database.py                      # SQLite 견적 이력 저장소
+├── estimate_handler.py              # Track A 단가합산 처리
+├── estimate_template.py             # Track A HTML 견적서 템플릿
+├── main.py                          # Streamlit 메인 앱
+├── package_price.xlsx               # 단일 가격 마스터
+├── quote_export.py                  # Track B Excel/PDF 출력
+├── requirements.txt
+└── README.md
 ```
 
-## 2. 주요 파일 설명
+## 제외 대상
 
--   **`main.py`**: Streamlit을 사용하여 GUI를 렌더링하고 사용자 입력을 처리하는 메인 진입점입니다.
--   **`data_manager.py`**: `database.py`를 사용하여 데이터베이스와 상호작용하며, 견적 이력 CRUD(생성, 읽기, 갱신, 삭제)를 담당합니다.
--   **`database.py`**: SQLite 데이터베이스 연결을 설정하고, 테이블을 생성하며, 기본적인 DB 작업을 수행합니다.
--   **`estimate_handler.py`**: 선택된 항목을 기반으로 견적 금액을 계산하고, `fpdf`와 `xhtml2pdf`를 사용하여 PDF 및 HTML 파일을 생성하는 로직을 포함합니다.
--   **`estimate_template.py`**: 견적서 HTML의 구조와 스타일을 정의하는 템플릿입니다.
--   **`견적서_이력/`**: 사용자가 생성한 모든 견적 관련 파일(PDF, CSV, HTML)이 저장되는 디렉토리입니다.
--   **`기초_견적항목_테이블.csv`**: 애플리케이션이 처음 시작될 때 데이터베이스에 로드되는 기본 견적 항목 목록입니다.
--   **`Estimate_App.py`, `Quote_Reload_App.py`**: 현재는 `main.py`로 통합된 이전 버전의 단일 파일 앱입니다. (보관용 또는 참고용)
+다음 항목은 로컬 실행 산출물이므로 Git에 포함하지 않습니다.
+
+- `quotation.db`, `catalog.db`
+- `견적서_이력/`
+- `__pycache__/`, `.pytest_cache/`
+- `*.log`
+- `deliverables/`
+- `검증_요약.xlsx`, `견적서.pdf`
+
+## 가격 데이터 기준
+
+`package_price.xlsx`가 우선 기준입니다. 앱은 다음 흐름으로 가격 데이터를 읽습니다.
+
+1. Track A: `package_price.xlsx#base_item(A)`
+2. Track B: `package_price.xlsx#base_product(B)`
+3. 파일이 없을 때만 `catalog/*.csv` 또는 legacy CSV fallback 사용
+
+Track B는 `base_product(B).항목코드`를 견적 저장과 프리셋 매칭의 영구키로 사용합니다. `순번`은 화면 정렬용입니다.

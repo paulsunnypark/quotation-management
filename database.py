@@ -8,6 +8,7 @@ class Database:
     def __init__(self, db_file="quotation.db"):
         self.db_file = db_file
         self.create_tables()
+        self.migrate()
     
     def get_connection(self):
         """데이터베이스 연결 생성"""
@@ -59,6 +60,45 @@ class Database:
             cursor.close()
             conn.close()
 
+    def migrate(self):
+        """이원화(Dual-Track) 지원을 위한 비파괴 스키마 확장.
+
+        ALTER TABLE ADD COLUMN은 멱등하지 않으므로 기존 컬럼을 확인 후 추가한다.
+        신규 컬럼은 모두 nullable이라 기존 레거시(Track A) 견적은 빈 값으로 무중단 동작한다.
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            def existing_columns(table):
+                cursor.execute(f"PRAGMA table_info({table})")
+                return {row[1] for row in cursor.fetchall()}
+
+            # estimates: 트랙 구분 (A=레거시 단가합산 / B=신규 패키지 CPQ)
+            est_cols = existing_columns("estimates")
+            if "track" not in est_cols:
+                cursor.execute("ALTER TABLE estimates ADD COLUMN track TEXT DEFAULT 'A'")
+
+            # estimate_items: Track B 패키지 메타데이터 (전부 nullable)
+            item_cols = existing_columns("estimate_items")
+            new_item_cols = {
+                "tier": "TEXT",            # 상품계층 (Core/Channel/Module/Service 등)
+                "identifier_no": "TEXT",   # 조달 식별번호
+                "reg_status": "TEXT",      # 등록상태 (등록/신규후보/커스터마이징)
+                "proposed_price": "REAL",  # 권장제안가 (대외용)
+                "supply_price": "REAL",    # 표준유통공급가 (파트너용)
+                "discount_rate": "REAL",   # 할인율
+            }
+            for col, coltype in new_item_cols.items():
+                if col not in item_cols:
+                    cursor.execute(
+                        f"ALTER TABLE estimate_items ADD COLUMN {col} {coltype}"
+                    )
+
+            conn.commit()
+        finally:
+            cursor.close()
+            conn.close()
+
     def get_estimate_version(self, estimate_id):
         """견적서의 현재 버전 번호 조회"""
         conn = self.get_connection()
@@ -84,8 +124,8 @@ class Database:
             cursor.close()
             conn.close()
 
-    def save_estimate(self, customer_info, company_info, items, total_amount, filename, parent_id=None, is_final=False):
-        """견적서 저장"""
+    def save_estimate(self, customer_info, company_info, items, total_amount, filename, parent_id=None, is_final=False, track='A'):
+        """견적서 저장 (track: A=레거시 / B=신규 패키지)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -129,20 +169,20 @@ class Database:
                     cursor.execute("""
                         INSERT INTO estimates (
                             customer_info, company_info, total_amount, filename,
-                            parent_id, root_id, is_final, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    """, (json.dumps(customer_info), json.dumps(company_info), 
-                         total_amount, filename, parent_id, root_id, is_final))
+                            parent_id, root_id, is_final, track, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """, (json.dumps(customer_info), json.dumps(company_info),
+                         total_amount, filename, parent_id, root_id, is_final, track))
                     estimate_id = cursor.lastrowid
             else:
                 # 최초 저장
                 cursor.execute("""
                     INSERT INTO estimates (
                         customer_info, company_info, total_amount, filename,
-                        is_final, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                """, (json.dumps(customer_info), json.dumps(company_info), 
-                     total_amount, filename, is_final))
+                        is_final, track, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, (json.dumps(customer_info), json.dumps(company_info),
+                     total_amount, filename, is_final, track))
                 estimate_id = cursor.lastrowid
                 
                 # root_id 설정
@@ -155,15 +195,20 @@ class Database:
                 # 기존 아이템 삭제 (final 버전 업데이트의 경우)
                 cursor.execute("DELETE FROM estimate_items WHERE estimate_id = ?", (estimate_id,))
                 
-                # 새 아이템 저장
+                # 새 아이템 저장 (Track B 확장 필드는 없으면 NULL)
                 for item in items:
                     cursor.execute("""
                         INSERT INTO estimate_items (
-                            estimate_id, item_code, item_name, unit, 
-                            quantity, unit_price, amount
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (estimate_id, item['항목코드'], item['품목명'], 
-                         item['단위'], item['수량'], item['단가'], item['금액']))
+                            estimate_id, item_code, item_name, unit,
+                            quantity, unit_price, amount,
+                            tier, identifier_no, reg_status,
+                            proposed_price, supply_price, discount_rate
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (estimate_id, item['항목코드'], item['품목명'],
+                         item['단위'], item['수량'], item['단가'], item['금액'],
+                         item.get('tier'), item.get('identifier_no'), item.get('reg_status'),
+                         item.get('proposed_price'), item.get('supply_price'),
+                         item.get('discount_rate')))
             
             # 트랜잭션 커밋
             conn.commit()
@@ -186,38 +231,38 @@ class Database:
         try:
             # 견적서 기본 정보 조회
             cursor.execute("""
-                SELECT customer_info, company_info, total_amount, is_final, estimate_id
+                SELECT customer_info, company_info, total_amount, is_final, estimate_id, track
                 FROM estimates WHERE estimate_id = ?
             """, (estimate_id,))
             row = cursor.fetchone()
-            
+
             if not row:
                 return None, None
-                
+
             customer_info = json.loads(row[0])
             company_info = json.loads(row[1])
             estimate_data = {
                 **customer_info,
                 **company_info,
                 'estimate_id': row[4],
-                'is_final': row[3]
+                'is_final': row[3],
+                'track': row[5] or 'A'
             }
-            
-            # 견적 항목 조회
+
+            # 견적 항목 조회 (Track B 확장 필드 포함)
             cursor.execute("""
-                SELECT item_code, item_name, unit, quantity, unit_price, amount
+                SELECT item_code, item_name, unit, quantity, unit_price, amount,
+                       tier, identifier_no, reg_status, proposed_price, supply_price, discount_rate
                 FROM estimate_items WHERE estimate_id = ?
             """, (estimate_id,))
-            
+
             items = []
-            for item_row in cursor.fetchall():
+            for r in cursor.fetchall():
                 items.append({
-                    '항목코드': item_row[0],
-                    '품목명': item_row[1],
-                    '단위': item_row[2],
-                    '수량': item_row[3],
-                    '단가': item_row[4],
-                    '금액': item_row[5]
+                    '항목코드': r[0], '품목명': r[1], '단위': r[2],
+                    '수량': r[3], '단가': r[4], '금액': r[5],
+                    'tier': r[6], 'identifier_no': r[7], 'reg_status': r[8],
+                    'proposed_price': r[9], 'supply_price': r[10], 'discount_rate': r[11],
                 })
                 
             return estimate_data, items

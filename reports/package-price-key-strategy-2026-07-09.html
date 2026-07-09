@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>package_price.xlsx 전환 및 항목코드 전략 분석</title>
+  <style>
+    body { font-family: "Segoe UI", "Malgun Gothic", sans-serif; margin: 32px; color: #17202a; line-height: 1.55; }
+    h1 { font-size: 28px; margin-bottom: 4px; }
+    h2 { font-size: 20px; margin-top: 28px; border-bottom: 1px solid #d8dee9; padding-bottom: 6px; }
+    h3 { font-size: 16px; margin-top: 20px; }
+    .subtitle { color: #5d6d7e; margin-top: 0; }
+    .summary { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 12px; margin: 20px 0; }
+    .card { border: 1px solid #d8dee9; border-radius: 8px; padding: 14px; background: #fbfcfd; }
+    .label { color: #5d6d7e; font-size: 12px; text-transform: uppercase; }
+    .value { font-size: 18px; font-weight: 700; margin-top: 4px; }
+    .pass { color: #176f3d; font-weight: 700; }
+    .warn { color: #a15c00; font-weight: 700; }
+    .fail { color: #a93226; font-weight: 700; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0 18px; }
+    th, td { border: 1px solid #d8dee9; padding: 8px 10px; vertical-align: top; }
+    th { background: #eef2f7; text-align: left; }
+    code { background: #f1f4f8; padding: 1px 4px; border-radius: 4px; }
+    .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; align-items: stretch; margin: 18px 0; }
+    .node { border: 1px solid #9fb3c8; border-radius: 8px; padding: 12px; background: #f7faff; text-align: center; min-height: 68px; }
+    .arrow { text-align: center; color: #5d6d7e; font-weight: 700; padding-top: 24px; }
+    .note { border-left: 4px solid #2e86c1; background: #f4f9fd; padding: 10px 12px; margin: 12px 0; }
+  </style>
+</head>
+<body>
+  <h1>package_price.xlsx 전환 및 항목코드 전략 분석</h1>
+  <p class="subtitle">작성일: 2026-07-09 KST · 대상: <code>E:\quotation-management</code></p>
+
+  <div class="summary">
+    <div class="card"><div class="label">파일명</div><div class="value pass">package_price.xlsx 권장</div></div>
+    <div class="card"><div class="label">시트명</div><div class="value pass">base_item(A), base_product(B) 가능</div></div>
+    <div class="card"><div class="label">Track B 키</div><div class="value warn">순번 유지 + 항목코드 추가</div></div>
+  </div>
+
+  <h2>1. 결론</h2>
+  <p><code>가격표.xlsx</code>를 <code>package_price.xlsx</code>로 바꾸는 방향은 좋습니다. <code>기초견적항목</code>은 <code>base_item(A)</code>, <code>products</code>는 <code>base_product(B)</code>로 바꾸면 Track A/B 기준 데이터가 명확해집니다.</p>
+  <p>다만 <code>base_product(B)</code>의 A컬럼 <code>순번</code>을 <code>항목코드</code>로 단순 대체하는 것은 권장하지 않습니다. <strong><code>순번</code>은 정렬용으로 유지하고, 별도 <code>항목코드</code> 컬럼을 추가하는 방식</strong>이 가장 안전합니다.</p>
+
+  <h2>2. 확인한 현재 구조</h2>
+  <table>
+    <thead><tr><th>현재 시트</th><th>역할</th><th>핵심 컬럼</th></tr></thead>
+    <tbody>
+      <tr><td><code>기초견적항목</code></td><td>Track A 레거시 단가합산 기준</td><td><code>항목코드</code>, <code>품목명</code>, <code>분류</code>, <code>단위</code>, <code>기본단가</code>, <code>제3단가</code></td></tr>
+      <tr><td><code>products</code></td><td>Track B 상품 마스터</td><td><code>순번</code>, <code>상품계층</code>, <code>내부제품명</code>, 가격 컬럼, <code>등록상태</code>, <code>식별번호</code></td></tr>
+      <tr><td><code>package_preset_items</code></td><td>Track B 프리셋 구성</td><td><code>프리셋코드</code>, <code>구성항목</code>, <code>조달등록후보</code>, <code>수량</code>, <code>단가_VAT포함</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>3. 이름 변경 판단</h2>
+  <table>
+    <thead><tr><th>변경</th><th>판단</th><th>이유</th></tr></thead>
+    <tbody>
+      <tr><td><code>가격표.xlsx</code> -> <code>package_price.xlsx</code></td><td class="pass">권장</td><td>코드/배포 경로 안정성, 역할 명확성, 향후 버전 관리에 유리합니다.</td></tr>
+      <tr><td><code>기초견적항목</code> -> <code>base_item(A)</code></td><td class="pass">가능</td><td>Track A 기준 데이터임이 명확합니다.</td></tr>
+      <tr><td><code>products</code> -> <code>base_product(B)</code></td><td class="pass">권장</td><td>Track B 상품 마스터임이 명확합니다.</td></tr>
+    </tbody>
+  </table>
+  <div class="note">괄호가 포함된 시트명은 Excel/openpyxl에서 사용할 수 있습니다. 단, 수식 참조 시에는 <code>'base_product(B)'!A1</code>처럼 작은따옴표가 필요합니다.</div>
+
+  <h2>4. 순번 vs 항목코드</h2>
+  <table>
+    <thead><tr><th>항목</th><th>용도</th><th>키 사용 적합성</th></tr></thead>
+    <tbody>
+      <tr><td><code>순번</code></td><td>엑셀 행 정렬, UI 표시 순서</td><td class="fail">영구키로 부적합. 행 삽입/정렬 시 의미가 바뀔 수 있습니다.</td></tr>
+      <tr><td><code>항목코드</code></td><td>상품 영구 식별자, 견적 저장, 프리셋 참조, 감사 추적</td><td class="pass">영구키로 적합. 한 번 발급하면 변경하지 않아야 합니다.</td></tr>
+      <tr><td><code>식별번호</code></td><td>조달 등록 외부 번호</td><td class="warn">내부 상품키로 부적합. <code>항목코드</code>와 분리해야 합니다.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>5. 권장 데이터 흐름</h2>
+  <div class="flow">
+    <div class="node"><strong>package_price.xlsx</strong><br><code>base_item(A)</code><br><code>base_product(B)</code></div>
+    <div class="arrow">-></div>
+    <div class="node"><strong>검증</strong><br>중복 코드<br>빈 코드<br>프리셋 참조</div>
+    <div class="arrow">-></div>
+    <div class="node"><strong>CPQ 계산</strong><br>Track A: base_item<br>Track B: base_product</div>
+  </div>
+  <div class="flow">
+    <div class="node"><strong>견적 저장</strong><br><code>estimate_items.item_code</code></div>
+    <div class="arrow">-></div>
+    <div class="node"><strong>견적 출력</strong><br>항목코드<br>식별번호 분리</div>
+    <div class="arrow">-></div>
+    <div class="node"><strong>감사/재출력</strong><br>과거 견적 안정성</div>
+  </div>
+
+  <h2>6. 기존 코드 재사용 정책</h2>
+  <p>기존 <code>base_item(A)</code>의 <code>항목코드</code>는 그대로 유지하는 것이 맞습니다. 기존 저장 견적, 불러오기, 출력 로직이 이미 이 코드를 기준으로 동작합니다.</p>
+  <table>
+    <thead><tr><th>상황</th><th>권장 정책</th></tr></thead>
+    <tbody>
+      <tr><td>Track A와 완전히 같은 품목</td><td>기존 <code>항목코드</code> 재사용 가능</td></tr>
+      <tr><td>Track B 전용 신규 패키지/상품</td><td>새 <code>항목코드</code> 발급</td></tr>
+      <tr><td>조달 등록품목</td><td>내부 <code>항목코드</code>와 외부 <code>식별번호</code> 분리 보관</td></tr>
+      <tr><td>신규등록후보</td><td>먼저 신규 <code>항목코드</code>를 발급하고, 등록 완료 후에도 유지</td></tr>
+    </tbody>
+  </table>
+
+  <h2>7. Track B 코드 체계 제안</h2>
+  <table>
+    <thead><tr><th>상품계층</th><th>Prefix</th><th>예시</th></tr></thead>
+    <tbody>
+      <tr><td>Core</td><td><code>B-CORE</code></td><td><code>B-CORE-001</code></td></tr>
+      <tr><td>Channel</td><td><code>B-CH</code></td><td><code>B-CH-001</code></td></tr>
+      <tr><td>User</td><td><code>B-USER</code></td><td><code>B-USER-001</code></td></tr>
+      <tr><td>Interface</td><td><code>B-IF</code></td><td><code>B-IF-001</code></td></tr>
+      <tr><td>Module</td><td><code>B-MOD</code></td><td><code>B-MOD-001</code></td></tr>
+      <tr><td>Service</td><td><code>B-SVC</code></td><td><code>B-SVC-001</code></td></tr>
+    </tbody>
+  </table>
+  <p>코드에는 가격, 버전, 등록상태를 넣지 않는 것이 좋습니다. 가격과 등록상태는 바뀔 수 있지만, 상품 식별자는 바뀌면 안 됩니다.</p>
+
+  <h2>8. 구현 영향</h2>
+  <table>
+    <thead><tr><th>영역</th><th>필요 변경</th></tr></thead>
+    <tbody>
+      <tr><td><code>catalog_db.py</code></td><td><code>PRICE_XLSX</code>를 <code>package_price.xlsx</code>로 변경, <code>products</code> 시트명을 <code>base_product(B)</code>로 변경</td></tr>
+      <tr><td><code>data_manager.py</code></td><td>Track A 기본 시트명을 <code>base_item(A)</code>로 변경</td></tr>
+      <tr><td><code>cpq_engine.py</code></td><td>제품명+단가 추정 매칭보다 <code>항목코드</code> 매칭 우선</td></tr>
+      <tr><td><code>main.py</code></td><td>Track B 저장 시 <code>식별번호</code> 또는 <code>품목명[:20]</code> 임시 코드 제거</td></tr>
+      <tr><td><code>package_preset_items</code></td><td><code>항목코드</code> 컬럼 추가 권장</td></tr>
+    </tbody>
+  </table>
+
+  <h2>9. 추천 적용 순서</h2>
+  <table>
+    <thead><tr><th>단계</th><th>작업</th><th>검증</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td><code>가격표.xlsx</code> 백업 후 <code>package_price.xlsx</code> 생성</td><td>기존 파일 보존</td></tr>
+      <tr><td>2</td><td>시트명 변경</td><td>Track A/B 로더가 새 시트명 인식</td></tr>
+      <tr><td>3</td><td><code>base_product(B)</code>에 <code>항목코드</code> 추가</td><td>빈 코드/중복 코드 없음</td></tr>
+      <tr><td>4</td><td>프리셋 구성에 <code>항목코드</code> 연결</td><td>이름+가격 추정 매칭 제거</td></tr>
+      <tr><td>5</td><td>코드 상수와 테스트 갱신</td><td>Track A/B 저장·불러오기·CPQ 테스트 PASS</td></tr>
+    </tbody>
+  </table>
+
+  <h2>10. 최종 권고</h2>
+  <p class="pass">최종 권고: <code>package_price.xlsx</code> 전환은 진행하되, <code>base_product(B)</code>는 <code>순번</code>을 정렬용으로 남기고 <code>항목코드</code>를 별도 영구키로 추가하십시오.</p>
+  <p>기존 <code>base_item(A)</code>의 코드는 그대로 유지하고, 신규등록후보와 Track B 전용 상품에는 별도 B 계열 코드를 발급하는 것이 견적 이력, 조달 식별번호, 패키지 프리셋을 모두 안정적으로 연결하는 방법입니다.</p>
+</body>
+</html>

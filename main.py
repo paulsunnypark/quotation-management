@@ -8,6 +8,8 @@ import webbrowser
 import os
 import re
 from database import Database
+from catalog_db import CatalogDB
+import cpq_engine as cpq
 
 class MainApp:
     def __init__(self):
@@ -15,6 +17,9 @@ class MainApp:
         self.data_manager = DataManager()
         self.estimate_handler = EstimateHandler()
         self.df = self.data_manager.load_base_items()
+        # Track B 카탈로그: package_price.xlsx(또는 CSV)로부터 매 기동 시 재생성 → 수정 즉시 반영
+        self.catalog = CatalogDB()
+        self.catalog.rebuild()
         # expanded 상태를 session state에 초기화
         st.session_state.setdefault('expanded_categories', {})
 
@@ -96,23 +101,28 @@ class MainApp:
             "건명": st.text_input("건명 (프로젝트명)", 
                 value=st.session_state.get('customer_project_name', ''),
                 key="customer_project_name"),
-            "담당자명": st.text_input("담당자명/직위", 
+            "담당자명": st.text_input("담당자명/직위",
                 value=st.session_state.get('customer_manager_name', ''),
+                placeholder="예) 홍길동 / 부장",
                 key="customer_manager_name"),
-            "이메일": st.text_input("이메일", 
+            "이메일": st.text_input("이메일",
                 value=st.session_state.get('customer_email', ''),
+                placeholder="예) hong@example.co.kr",
                 key="customer_email"),
-            "전화번호": st.text_input("전화번호", 
+            "전화번호": st.text_input("전화번호",
                 value=st.session_state.get('customer_phone', ''),
+                placeholder="예) 010-1234-5678",
                 key="customer_phone"),
             "견적일자": st.date_input("견적일자",
                 value=st.session_state.get('estimate_date', datetime.date.today()),
                 key="estimate_date"),
-            "납품기간": st.text_input("납품기간", 
+            "납품기간": st.text_input("납품기간",
                 value=st.session_state.get('delivery_period', ''),
+                placeholder="예) 발주 후 30일",
                 key="delivery_period"),
-            "하자기간": st.text_input("하자기간", 
+            "하자기간": st.text_input("하자기간",
                 value=st.session_state.get('warranty_period', ''),
+                placeholder="예) 구축 후 12개월",
                 key="warranty_period")
         }
             
@@ -136,18 +146,22 @@ class MainApp:
         
         # 당사 정보를 한 컬럼으로 통합
         company_info = {
-            "견적담당자명": st.text_input("담당자명/직위", 
+            "견적담당자명": st.text_input("담당자명/직위",
                 value=st.session_state.get('company_manager_name', ''),
+                placeholder="예) 황호성 / 이사",
                 key="company_manager_name"),
-            "견적담당자이메일": st.text_input("이메일", 
+            "견적담당자이메일": st.text_input("이메일",
                 value=st.session_state.get('company_email', ''),
+                placeholder="예) sales@solu.co.kr",
                 key="company_email"),
-            "견적담당자전화번호": st.text_input("전화번호", 
+            "견적담당자전화번호": st.text_input("전화번호",
                 value=st.session_state.get('company_phone', ''),
+                placeholder="예) 010-7672-4006",
                 key="company_phone"),
-            "특이사항": st.text_area("특이사항", 
+            "특이사항": st.text_area("특이사항",
                 value=st.session_state.get('special_notes', ''),
                 height=150,
+                placeholder="예) 1. 결제조건: 현금결제\n2. 유효기간: 견적 후 1개월",
                 help="견적서에 포함될 특이사항을 입력하세요. (예: 납품조건, 결제조건 등)",
                 key="special_notes"),
             "홈페이지": "http://www.solu.co.kr"
@@ -206,15 +220,16 @@ class MainApp:
                         st.markdown(f"**[{row['품목명']}] {row['항목코드']}**")
                         st.markdown(f"{row['설명']}")
                     with col2:
-                        default_qty = st.session_state.get(f"qty_{cat}_{i}", 0)
+                        qty_key = f"qty_{row['항목코드']}"
+                        default_qty = st.session_state.get(qty_key, 0)
                         qty = st.number_input(
                             f"수량 ({row['단위']}) - {row['항목코드']}", 
                             min_value=0, 
                             step=1,
                             value=default_qty,
-                            key=f"qty_{cat}_{i}"
+                            key=qty_key
                         )
-                        selected_quantities[f"qty_{cat}_{i}"] = qty
+                        selected_quantities[qty_key] = qty
                         
         return selected_quantities
 
@@ -343,8 +358,8 @@ class MainApp:
             if is_final:
                 version = "final"
                 
-        # 견적서 파일명 생성
-        filename = self.generate_filename(customer_info, version)
+        # 견적서 파일명 생성 (트랙 표기 TB-A + 버전)
+        filename = self.generate_filename(customer_info, f"TB-A_{version}")
 
         # --- 버튼 섹션 ---
         col1, col2, col3, col4 = st.columns(4)
@@ -413,6 +428,173 @@ class MainApp:
                     st.rerun()
 
 
+    def render_track_b(self, customer_info, company_info):
+        """Track B - 신규 패키지 CPQ 견적 (명분 추천 + 예산대 프리셋 + 이중가격 + 할인검증)"""
+        # 0) 공공가치(명분) 기반 제안
+        st.subheader("0️⃣ 공공가치 / 사업 명분 선택")
+        svcs = self.catalog.get_service_packages()
+        svc_labels = {f"{s['순위']}. {s['서비스명']} ({s['목표가격대']})": s for s in svcs}
+        svc_label = st.selectbox("공공 서비스 명분 (선택)", ["(선택 안 함)"] + list(svc_labels.keys()))
+        recommended = None
+        if svc_label != "(선택 안 함)":
+            svc = svc_labels[svc_label]
+            recommended = cpq.suggest_preset(svc['서비스명'])
+            st.markdown(f"**공공 명분:** {svc['공공명분']}")
+            st.markdown(f"**조합 제품:** {svc['조합제품']}  ·  **주요 수요처:** {svc['주요수요처']}")
+            st.success(f"📑 납품요구명 예시: **{svc['납품요구명_예시']}**  → 추천 예산대 **{recommended}**")
+
+        st.subheader("1️⃣ 예산대 패키지 선택")
+
+        presets = self.catalog.get_connection()
+        try:
+            preset_rows = [dict(r) for r in presets.execute(
+                'SELECT * FROM package_presets ORDER BY "프리셋코드"')]
+        finally:
+            presets.close()
+
+        labels = {f"{p['프리셋코드']}. {p['패키지명']} (권장 {p['권장가격대']})": p['프리셋코드']
+                  for p in preset_rows}
+        label_keys = list(labels.keys())
+        default_idx = 0
+        if recommended:
+            default_idx = next((i for i, k in enumerate(label_keys)
+                                if labels[k] == recommended), 0)
+        chosen_label = st.selectbox("예산대 프리셋", label_keys, index=default_idx)
+        preset_code = labels[chosen_label]
+
+        # 프리셋 변경 시 라인 새로 적재 (불러온 견적은 1회 보존)
+        if st.session_state.pop('tb_loaded', False):
+            st.session_state['tb_preset'] = preset_code
+        elif st.session_state.get('tb_preset') != preset_code:
+            st.session_state['tb_preset'] = preset_code
+            st.session_state['tb_lines'] = cpq.load_preset_lines(preset_code, self.catalog)
+
+        lines = st.session_state['tb_lines']
+
+        st.subheader("2️⃣ 구성 항목 (수량 조정 가능)")
+        edit_df = pd.DataFrame([{
+            '항목코드': l.get('항목코드', ''),
+            '계층': l['계층'], '품목명': l['품목명'], '조달상태': l['조달상태'],
+            '식별번호': l['식별번호'], '단위': l['단위'],
+            '수량': l['수량'], '제안단가': l['제안단가'], '공급단가': l['공급단가'],
+        } for l in lines])
+        edited = st.data_editor(
+            edit_df, key='tb_editor', use_container_width=True, hide_index=True,
+            disabled=['항목코드', '계층', '품목명', '조달상태', '식별번호', '단위', '제안단가', '공급단가'],
+            column_config={
+                '수량': st.column_config.NumberColumn("수량", min_value=0, step=1, format="%d"),
+                '제안단가': st.column_config.NumberColumn(format="%d"),
+                '공급단가': st.column_config.NumberColumn(format="%d"),
+            })
+        # 수량 반영 후 재계산
+        for i, l in enumerate(lines):
+            l['수량'] = int(edited.iloc[i]['수량'])
+            cpq.recompute_line(l)
+
+        st.subheader("3️⃣ 할인 및 가격")
+        col1, col2 = st.columns(2)
+        with col1:
+            grade = st.selectbox("파트너 등급", [
+                '일반 리셀러', '인증 파트너', '전략 파트너', 'KT급 우호 파트너'])
+        with col2:
+            discount = st.slider("할인율(%)", 0, 30, 0, 1, format="%d%%") / 100
+
+        ok, limit, msg = cpq.validate_discount(discount, grade, self.catalog)
+        (st.success if ok else st.error)(msg)
+
+        totals = cpq.compute_totals(lines, discount)
+        c1, c2, c3, c4 = st.columns(4)
+        c1.markdown(f"**제안 합계**<br>{totals['제안합계']:,}원", unsafe_allow_html=True)
+        c2.markdown(f"**할인 후 제안가 ({discount:.0%})**<br>{totals['제안가_할인후']:,}원", unsafe_allow_html=True)
+        c3.markdown(f"**유통 공급가**<br>{totals['공급합계']:,}원", unsafe_allow_html=True)
+        c4.markdown(f"**예상 마진**<br>{totals['마진']:,}원", unsafe_allow_html=True)
+
+        # 녹취 기반 검증 (신규 standalone vs 기존 add-on)
+        existing_customer = st.checkbox(
+            "기존 IPX-Series 보유 고객 (녹취 기반 보유 → 분석 add-on 견적)",
+            key='tb_existing')
+        if not existing_customer and cpq.recording_base_status(lines) == "missing":
+            st.error(f"⚠️ {cpq.RECORDING_MISSING_MSG}")
+
+        # VR 중복방지 문구
+        note = cpq.vr_overlap_note(lines)
+        if note:
+            st.info(f"📌 중복과금 방지 표준문구\n\n{note}")
+
+        # 6계층 구성 요약 (사업전략 v4: 단일 SKU → 6계층)
+        tb = cpq.tier_breakdown(lines)
+        if tb:
+            st.markdown("🧱 **계층별 구성:** " +
+                        "  ·  ".join(f"{t} {amt:,}원" for t, amt in tb.items()))
+
+        # 식별번호 조합표
+        bd = cpq.reg_status_breakdown(lines)
+        with st.expander("📋 식별번호 조합 (등록/신규후보/커스터마이징)"):
+            for status, items in bd.items():
+                if items:
+                    st.markdown(f"**{status}**: {', '.join(items)}")
+
+        # 4) 제출 전 체크리스트
+        st.subheader("4️⃣ 제출 전 체크리스트")
+        svc_name = customer_info.get('건명') or (
+            svc_label if svc_label != "(선택 안 함)" else "")
+        approver = st.text_input("할인 승인권자 (할인 적용 시 필수)", key='tb_approver')
+        checks = cpq.submission_checklist(lines, svc_name, discount, approver,
+                                          existing_customer=existing_customer)
+        all_ok = all(ok for _, ok in checks)
+        for label, ok in checks:
+            st.markdown(f"{'✅' if ok else '⚠️'} {label}")
+
+        # 5) 견적 저장 (Track B, track='B' + 확장 컬럼)
+        st.subheader("5️⃣ 견적 저장")
+        if st.button("💾 Track B 견적 저장"):
+            if self.validate_inputs(customer_info, company_info):
+                items_payload = [{
+                    '항목코드': l.get('항목코드') or l['식별번호'] or l['품목명'][:20],
+                    '품목명': l['품목명'], '단위': l['단위'],
+                    '수량': l['수량'], '단가': l['제안단가'], '금액': l['제안금액'],
+                    'tier': l['계층'], 'identifier_no': l['식별번호'],
+                    'reg_status': l['조달상태'], 'proposed_price': l['제안단가'],
+                    'supply_price': l['공급단가'], 'discount_rate': discount,
+                } for l in lines]
+                meta = {**customer_info, **company_info,
+                        '총금액': totals['제안가_할인후'], 'is_final': False}
+                # 버전 계산 (재저장 시 누적)
+                tb_id = st.session_state.get('tb_estimate_id')
+                ver = f"v{self.data_manager.get_estimate_version(tb_id) + 1}" if tb_id else "v1"
+                save_name = self.generate_filename(customer_info, f"TB-B-{preset_code}_{ver}")
+                try:
+                    eid = self.data_manager.save_estimate(
+                        meta, items_payload, save_name,
+                        parent_id=tb_id, track='B')
+                    st.session_state['tb_estimate_id'] = eid
+                    st.success(f"✅ Track B 견적 저장 완료: {save_name} (id={eid})")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"저장 실패: {e}")
+
+        # 6) 견적서 출력 (업체용/소비자용 2종)
+        st.subheader("6️⃣ 견적서 출력")
+        import quote_export as qx
+        os.makedirs(self.data_manager.doc_folder, exist_ok=True)
+        base = self.generate_filename(customer_info, f"TB-{preset_code}")
+        if st.button("📊 Excel 견적서 생성 (업체용+소비자용 2시트)"):
+            if not all_ok:
+                st.warning("⚠️ 체크리스트 미통과 항목이 있습니다. 확인 후 제출하세요.")
+            path = os.path.join(self.data_manager.doc_folder, f"{base}.xlsx")
+            qx.export_excel(path, customer_info, company_info, lines, note=note)
+            with open(path, "rb") as f:
+                st.download_button("📥 Excel 다운로드", f.read(), file_name=f"{base}.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.success(f"✅ 생성 완료: {path}")
+        if st.button("📄 PDF 견적서 생성 (소비자용)"):
+            path = os.path.join(self.data_manager.doc_folder, f"{base}.pdf")
+            qx.export_pdf(path, customer_info, company_info, lines, kind="소비자용", note=note)
+            with open(path, "rb") as f:
+                st.download_button("📥 PDF 다운로드", f.read(), file_name=f"{base}.pdf",
+                                   mime="application/pdf")
+            st.success(f"✅ 생성 완료: {path}")
+
     def load_estimate_to_session(self, estimate_data, items_data):
         """불러온 견적서 데이터를 세션에 저장"""
         # 기존 세션 초기화 (메시지 없이)
@@ -439,13 +621,36 @@ class MainApp:
             if key == '견적일자' and value:
                 st.session_state['estimate_date'] = datetime.datetime.strptime(value, "%Y-%m-%d").date()
 
-        # 수량 정보 업데이트
+        # Track B 견적이면 패키지 편집기로 복원
+        if estimate_data.get('track') == 'B':
+            lines = []
+            for it in items_data:
+                proposed = it.get('proposed_price') or it['단가']
+                supply = it.get('supply_price') or round(proposed * 0.6)
+                ratio = round(supply / proposed, 4) if proposed else 0.6
+                lines.append({
+                    '항목코드': it.get('항목코드') or it.get('item_code') or '',
+                    '품목명': it['품목명'], '계층': it.get('tier') or 'Module',
+                    '조달상태': it.get('reg_status') or '', '식별번호': it.get('identifier_no') or '',
+                    '단위': it['단위'], '수량': it['수량'],
+                    '제안단가': proposed, '제안금액': proposed * it['수량'],
+                    '공급가율': ratio, '공급단가': supply, '공급금액': supply * it['수량'],
+                    '비고': '', '매칭': True,
+                })
+            st.session_state['tb_lines'] = lines
+            st.session_state['tb_loaded'] = True            # 프리셋 재적재 방지
+            st.session_state['tb_estimate_id'] = estimate_data.get('estimate_id')
+            st.session_state['quote_mode'] = "신규 패키지 CPQ (Track B)"
+            return
+
+        # Track A: 모드 전환 + 수량 정보 업데이트
+        st.session_state['quote_mode'] = "레거시 단가합산 (Track A)"
         for item in items_data:
             for cat in self.df['분류'].unique():
                 sub_df = self.df[self.df['분류'] == cat].reset_index(drop=True)
                 for i, row in sub_df.iterrows():
                     if row['항목코드'] == item['항목코드']:
-                        st.session_state[f"qty_{cat}_{i}"] = item['수량']
+                        st.session_state[f"qty_{row['항목코드']}"] = item['수량']
 
 
     def run(self):
@@ -469,13 +674,26 @@ class MainApp:
         )
         
         self.render_sidebar()
+
+        # 견적 모드 선택 (이원화) - 불러온 Track B 견적은 자동 전환(key='quote_mode')
+        mode = st.radio(
+            "견적 모드",
+            ["레거시 단가합산 (Track A)", "신규 패키지 CPQ (Track B)"],
+            horizontal=True,
+            key='quote_mode',
+            help="Track A: 기존 단가합산 방식 / Track B: 예산대 패키지·이중가격·할인검증",
+        )
+
         customer_info = self.render_customer_info()
         company_info = self.render_company_info()
-        selected_quantities = self.render_item_selection()
-        
-        selected_items = self.estimate_handler.process_selected_items(self.df, selected_quantities)
-        self.render_results(selected_items, customer_info, company_info)
+
+        if mode.startswith("신규"):
+            self.render_track_b(customer_info, company_info)
+        else:
+            selected_quantities = self.render_item_selection()
+            selected_items = self.estimate_handler.process_selected_items(self.df, selected_quantities)
+            self.render_results(selected_items, customer_info, company_info)
 
 if __name__ == "__main__":
     app = MainApp()
-    app.run() 
+    app.run()

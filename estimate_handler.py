@@ -15,10 +15,13 @@ class EstimateHandler:
         for cat in df['분류'].unique():
             sub_df = df[df['분류'] == cat].reset_index(drop=True)
             for i, row in sub_df.iterrows():
-                qty = selected_quantities.get(f"qty_{cat}_{i}", 0)
+                qty = selected_quantities.get(
+                    f"qty_{row['항목코드']}",
+                    selected_quantities.get(f"qty_{cat}_{i}", 0)
+                )
                 if qty > 0:
-                    # 기본단가에서 쉼표 제거하고 숫자로 변환
-                    unit_price = int(str(row['기본단가']).replace(',', '').strip())
+                    # 기본단가에서 쉼표 제거하고 숫자로 변환 (정수/실수/문자 모두 허용)
+                    unit_price = int(float(str(row['기본단가']).replace(',', '').strip()))
                     selected_items.append({
                         "항목코드": row['항목코드'],
                         "품목명": row['품목명'],
@@ -101,4 +104,4 @@ class EstimateHandler:
         # PDF 저장
         pdf_path = os.path.join(self.doc_folder, f"{filename}.pdf")
         pdf.output(pdf_path)
-        return pdf_path 
+        return pdf_path

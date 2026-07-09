@@ -4,18 +4,34 @@ from datetime import datetime
 from database import Database
 
 class DataManager:
-    def __init__(self, base_csv_file="기초_견적항목_테이블.csv", doc_folder="견적서_이력"):
+    def __init__(self, base_csv_file="기초_견적항목_테이블.csv", doc_folder="견적서_이력",
+                 price_xlsx="package_price.xlsx", base_sheet="base_item(A)"):
         self.base_csv_file = base_csv_file
+        self.price_xlsx = price_xlsx
+        self.base_sheet = base_sheet
         self.doc_folder = doc_folder
         os.makedirs(doc_folder, exist_ok=True)
         self.db = Database()
-        
+
     def load_base_items(self):
-        """기초 견적 항목 데이터 로드"""
+        """Track A 기초 견적 항목 로드 (package_price.xlsx 우선, CSV fallback)"""
+        price_xlsx = self.price_xlsx
+        base_sheet = self.base_sheet
+        if not os.path.exists(price_xlsx) and os.path.exists("가격표.xlsx"):
+            price_xlsx = "가격표.xlsx"
+            base_sheet = "기초견적항목"
+        if os.path.exists(price_xlsx):
+            df = pd.read_excel(price_xlsx, sheet_name=base_sheet, dtype=str)
+            df.columns = df.columns.str.strip()
+            # 숫자 단가 컬럼 정리
+            for col in ("기본단가", "제3단가"):
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+            return df.dropna(how="all")
         return pd.read_csv(self.base_csv_file, comment='#', skipinitialspace=True)
         
-    def save_estimate(self, meta_data, selected_items, filename, parent_id=None):
-        """견적서 데이터 저장"""
+    def save_estimate(self, meta_data, selected_items, filename, parent_id=None, track='A'):
+        """견적서 데이터 저장 (track: A=레거시 / B=신규 패키지)"""
         try:
             # 데이터베이스에 저장
             estimate_id = self.db.save_estimate(
@@ -41,7 +57,8 @@ class DataManager:
                 total_amount=meta_data['총금액'],
                 filename=filename,
                 parent_id=parent_id,
-                is_final=meta_data.get('is_final', False)
+                is_final=meta_data.get('is_final', False),
+                track=track
             )
             
             if not estimate_id:
@@ -88,4 +105,4 @@ class DataManager:
         
     def get_estimate_version(self, estimate_id):
         """견적서의 현재 버전 번호 조회"""
-        return self.db.get_estimate_version(estimate_id) 
+        return self.db.get_estimate_version(estimate_id)

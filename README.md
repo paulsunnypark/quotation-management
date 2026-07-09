@@ -1,49 +1,44 @@
-# README.md 파일 생성
-echo "# AI 견적서 관리 시스템
+# Solu-Quote CPQ
 
-## 프로젝트 개요
-AI 기반의 견적서 자동 생성 및 관리 시스템입니다.
+솔루텍 견적 생성 및 이력 관리 시스템입니다. 현재 구현은 기존 단가합산 방식과 신규 패키지 CPQ 방식을 함께 지원합니다.
 
 ## 주요 기능
-- 견적서 자동 생성 및 버전 관리
-- PDF/HTML 형식 지원
-- 견적 이력 관리
-- 자동 버전 관리 시스템
 
-## 기술 스택
-- Python
-- Streamlit
-- SQLite
-- FPDF
-- Pandas
+- Track A: `base_item(A)` 기반 기존 단가합산 견적
+- Track B: `base_product(B)` 기반 패키지 CPQ 견적
+- `package_price.xlsx` 단일 가격 마스터 로드
+- 예산대 프리셋, 공공가치 명분 추천, 이중가격 계산
+- 파트너 등급별 할인 한도 검증
+- 견적 이력 저장, 버전 관리, HTML/PDF/Excel 출력
 
-## 설치 방법
-1. 저장소 클론
-\`\`\`bash
-git clone https://github.com/YOUR_USERNAME/quotation-management.git
-cd quotation-management
-\`\`\`
+## 기준 데이터
 
-2. 가상환경 생성 및 활성화
-\`\`\`bash
+- `package_price.xlsx`: 가격 마스터
+- `base_item(A)`: Track A 레거시 견적 항목
+- `base_product(B)`: Track B 상품 마스터
+- `package_preset_items`: Track B 프리셋 구성. `항목코드`로 `base_product(B)`를 참조합니다.
+- `catalog/*.csv`: 가격 마스터 재생성 및 fallback용 시드 데이터
+
+## 실행
+
+```powershell
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-\`\`\`
-
-3. 의존성 설치
-\`\`\`bash
+.\venv\Scripts\activate
 pip install -r requirements.txt
-\`\`\`
-
-## 실행 방법
-\`\`\`bash
 streamlit run main.py
-\`\`\`" > README.md
+```
 
-# requirements.txt 파일 생성
-pip freeze > requirements.txt
+브라우저에서 `http://127.0.0.1:8501`로 접속합니다.
 
-# README.md와 requirements.txt 추가 및 커밋
-git add README.md requirements.txt
-git commit -m "문서: README 및 requirements.txt 추가"
-git push
+## 검증
+
+```powershell
+.\venv\Scripts\python.exe tests\test_cpq_engine.py
+.\venv\Scripts\python.exe -m compileall -q -x "venv" .
+```
+
+## 운영 메모
+
+- `quotation.db`, `catalog.db`, `견적서_이력/`, 로그 파일은 로컬 실행 산출물이며 Git에 포함하지 않습니다.
+- `package_price.xlsx`의 Track B 상품은 `순번`이 아니라 `항목코드`를 영구키로 사용합니다.
+- 가격 마스터를 CSV에서 다시 만들 때는 `python build_price_master.py`를 실행합니다.

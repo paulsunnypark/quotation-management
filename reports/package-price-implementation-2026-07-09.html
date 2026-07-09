@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>package_price.xlsx 전환 구현 보고</title>
+  <style>
+    body { font-family: "Segoe UI", "Malgun Gothic", sans-serif; margin: 32px; color: #17202a; line-height: 1.55; }
+    h1 { font-size: 28px; margin: 0 0 4px; }
+    h2 { font-size: 20px; margin-top: 28px; border-bottom: 1px solid #d8dee9; padding-bottom: 6px; }
+    .subtitle { color: #5d6d7e; margin-top: 0; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 12px; margin: 18px 0; }
+    .card { border: 1px solid #d8dee9; border-radius: 8px; padding: 14px; background: #fbfcfd; }
+    .label { color: #5d6d7e; font-size: 12px; text-transform: uppercase; }
+    .value { font-size: 18px; font-weight: 700; margin-top: 4px; }
+    .pass { color: #176f3d; font-weight: 700; }
+    .fail { color: #a93226; font-weight: 700; }
+    .pending { color: #a15c00; font-weight: 700; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0 18px; }
+    th, td { border: 1px solid #d8dee9; padding: 8px 10px; vertical-align: top; }
+    th { background: #eef2f7; text-align: left; }
+    code { background: #f1f4f8; padding: 1px 4px; border-radius: 4px; }
+    .note { border-left: 4px solid #2e86c1; background: #f4f9fd; padding: 10px 12px; margin: 12px 0; }
+  </style>
+</head>
+<body>
+  <h1>package_price.xlsx 전환 구현 보고</h1>
+  <p class="subtitle">작성일: 2026-07-09 KST · 대상: <code>E:\quotation-management</code></p>
+
+  <div class="grid">
+    <div class="card"><div class="label">가격 마스터</div><div class="value pass">전환 완료</div></div>
+    <div class="card"><div class="label">Track A</div><div class="value pass">base_item(A)</div></div>
+    <div class="card"><div class="label">Track B</div><div class="value pass">base_product(B)</div></div>
+    <div class="card"><div class="label">검증</div><div class="value pass">22/22 PASS</div></div>
+  </div>
+
+  <h2>1. 구현 결과</h2>
+  <table>
+    <thead><tr><th>항목</th><th>결과</th></tr></thead>
+    <tbody>
+      <tr><td>파일명</td><td><code>가격표.xlsx</code>를 제거하고 <code>package_price.xlsx</code>를 기준 파일로 생성했습니다.</td></tr>
+      <tr><td>Track A 시트</td><td><code>기초견적항목</code> -> <code>base_item(A)</code></td></tr>
+      <tr><td>Track B 시트</td><td><code>products</code> -> <code>base_product(B)</code></td></tr>
+      <tr><td>Track B 키</td><td><code>순번</code>은 정렬용으로 유지하고, <code>항목코드</code>를 영구키로 추가했습니다.</td></tr>
+      <tr><td>프리셋 구성</td><td><code>package_preset_items</code>에도 <code>항목코드</code>를 추가해 구성품이 상품 마스터를 직접 참조하게 했습니다.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>2. 데이터 변경</h2>
+  <table>
+    <thead><tr><th>시트</th><th>변경 내용</th><th>검증 상태</th></tr></thead>
+    <tbody>
+      <tr><td><code>base_item(A)</code></td><td>기존 Track A 항목코드와 단가 구조 유지</td><td class="pass">PASS</td></tr>
+      <tr><td><code>base_product(B)</code></td><td><code>항목코드</code> 24개 생성. 기존 21개 + 프리셋 전용 후보/조합 3개 추가</td><td class="pass">중복 없음</td></tr>
+      <tr><td><code>package_preset_items</code></td><td>31개 프리셋 라인이 모두 <code>base_product(B)</code>의 <code>항목코드</code>를 참조</td><td class="pass">누락 없음</td></tr>
+    </tbody>
+  </table>
+
+  <h2>3. 코드 변경</h2>
+  <table>
+    <thead><tr><th>파일</th><th>변경</th></tr></thead>
+    <tbody>
+      <tr><td><code>catalog_db.py</code></td><td><code>package_price.xlsx</code>와 <code>base_product(B)</code>를 우선 로드. 구 파일/시트 fallback은 유지.</td></tr>
+      <tr><td><code>data_manager.py</code></td><td>Track A 기본 로더를 <code>package_price.xlsx#base_item(A)</code>로 변경.</td></tr>
+      <tr><td><code>cpq_engine.py</code></td><td>프리셋 라인을 <code>항목코드</code>로 우선 매칭하고, 없을 때만 기존 이름+단가 휴리스틱 사용.</td></tr>
+      <tr><td><code>main.py</code></td><td>Track B 구성표에 <code>항목코드</code> 표시, 저장 payload도 안정적인 <code>항목코드</code> 사용.</td></tr>
+      <tr><td><code>build_price_master.py</code></td><td>재생성 시에도 새 파일명·시트명·Track B 코드 구조가 유지되도록 갱신.</td></tr>
+      <tr><td><code>tests/test_cpq_engine.py</code></td><td>상품 코드 중복 방지와 프리셋 코드 매칭 테스트 추가.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4. 검증 결과</h2>
+  <table>
+    <thead><tr><th>검증</th><th>결과</th></tr></thead>
+    <tbody>
+      <tr><td><code>python tests/test_cpq_engine.py</code></td><td class="pass">22/22 PASS</td></tr>
+      <tr><td><code>python -m compileall -q -x "venv" .</code></td><td class="pass">PASS</td></tr>
+      <tr><td>워크북 스키마 검증</td><td class="pass">시트명 정상, 상품코드 24개 유일, 프리셋 31개 참조 누락 0개</td></tr>
+      <tr><td>카탈로그 재생성</td><td class="pass"><code>products=24</code>, <code>package_preset_items=31</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <strong>주의:</strong> 병렬 테스트 중 <code>catalog.db</code>를 동시에 rebuild하면 SQLite 참조 DB가 순간적으로 비는 경합이 발생할 수 있습니다. 운영에서는 가격표 import/rebuild를 단일 작업으로 잠그는 방식이 필요합니다.
+  </div>
+
+  <h2>5. 남은 리스크</h2>
+  <table>
+    <thead><tr><th>리스크</th><th>상태</th><th>후속 조치</th></tr></thead>
+    <tbody>
+      <tr><td>가격표 import 동시 실행</td><td class="pending">Pending</td><td>rebuild lock 또는 임시 DB 생성 후 atomic replace 적용 권장</td></tr>
+      <tr><td>Track B 견적 메타 저장</td><td class="pending">Pending</td><td>프리셋코드, 파트너등급, 할인승인권자, 가격표 fingerprint 저장 필요</td></tr>
+      <tr><td>고객용 Excel 출력</td><td class="pending">Pending</td><td>기존견적서 샘플 기반 출력 템플릿 구현 필요</td></tr>
+    </tbody>
+  </table>
+</body>
+</html>
